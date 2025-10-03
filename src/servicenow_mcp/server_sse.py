@@ -14,7 +14,9 @@ from mcp.server import Server
 from mcp.server.fastmcp import FastMCP
 from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
+from starlette.responses import Response
 from starlette.routing import Mount, Route
 
 from servicenow_mcp.server import ServiceNowMCP
@@ -25,25 +27,57 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
     """Create a Starlette application that can serve the provided mcp server with SSE."""
     sse = SseServerTransport("/messages/")
 
-    async def handle_sse(request: Request) -> None:
+    async def handle_sse(request: Request) -> Response:
+        # Get session ID from ServiceNow MCP server if available
+        session_id = getattr(mcp_server, 'session_id', None)
+        
+        async def send_with_headers(message):
+            # Add session headers to SSE responses
+            if session_id and isinstance(message, dict) and message.get('type') == 'http.response.start':
+                headers = message.get('headers', [])
+                headers.extend([
+                    (b'x-mcp-session-id', session_id.encode()),
+                    (b'mcp-session-id', session_id.encode())
+                ])
+                message['headers'] = headers
+            await request._send(message)  # noqa: SLF001
+        
         async with sse.connect_sse(
             request.scope,
             request.receive,
-            request._send,  # noqa: SLF001
+            send_with_headers,
         ) as (read_stream, write_stream):
             await mcp_server.run(
                 read_stream,
                 write_stream,
                 mcp_server.create_initialization_options(),
             )
+        
+        return Response(status_code=200)
 
-    return Starlette(
+    class SessionHeaderMiddleware(BaseHTTPMiddleware):
+        """Middleware to add session headers to all responses."""
+        
+        async def dispatch(self, request: Request, call_next):
+            response = await call_next(request)
+            session_id = getattr(mcp_server, 'session_id', None)
+            if session_id:
+                response.headers["x-mcp-session-id"] = session_id
+                response.headers["mcp-session-id"] = session_id
+            return response
+
+    app = Starlette(
         debug=debug,
         routes=[
             Route("/sse", endpoint=handle_sse),
             Mount("/messages/", app=sse.handle_post_message),
         ],
     )
+    
+    # Add middleware for session headers
+    app.add_middleware(SessionHeaderMiddleware)
+    
+    return app
 
 
 class ServiceNowSSEMCP(ServiceNowMCP):

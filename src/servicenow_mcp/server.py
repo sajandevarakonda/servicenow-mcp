@@ -7,6 +7,7 @@ This module provides the main implementation of the ServiceNow MCP server.
 import json
 import logging
 import os
+import uuid
 from typing import Any, Dict, List, Union
 
 import mcp.types as types
@@ -25,7 +26,7 @@ from servicenow_mcp.utils.config import ServerConfig
 from servicenow_mcp.utils.tool_utils import get_tool_definitions
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Define path for the configuration file
@@ -98,10 +99,13 @@ class ServiceNowMCP:
         self.auth_manager = AuthManager(self.config.auth, self.config.instance_url)
         self.mcp_server = Server("ServiceNow")  # Use low-level Server
         self.name = "ServiceNow"
+        # Use custom session ID from env var or generate new one
+        self.session_id = os.getenv("MCP_SESSION_ID", str(uuid.uuid4()))
+        logger.info(f"ServiceNow MCP Server initialized with session ID: {self.session_id}")
 
         self.package_definitions: Dict[str, List[str]] = {}
         self.enabled_tool_names: List[str] = []
-        self.current_package_name: str = "none"
+        self.current_package_name: str = "full"
         self._load_package_config()
         self._determine_enabled_tools()
 
@@ -235,7 +239,7 @@ class ServiceNowMCP:
             ValueError: If the tool is unknown, disabled, or if arguments are invalid.
             RuntimeError: If tool execution or serialization fails.
         """
-        logger.info(f"Received call_tool request for tool '{name}'")
+        logger.info(f"Received call_tool request for tool '{name}' (session: {self.session_id})")
         # Handle the introspection tool separately
         if name == "list_tool_packages":
             if self.current_package_name == "none":
@@ -244,8 +248,15 @@ class ServiceNowMCP:
                 )
             result_dict = self._list_tool_packages_impl()
             serialized_string = json.dumps(result_dict, indent=2)
-            # Return a list with a TextContent object
-            return [types.TextContent(type="text", text=serialized_string)]
+            # Return a list with a TextContent object with session metadata
+            return [types.TextContent(
+                type="text", 
+                text=serialized_string,
+                annotations={
+                    "mcp-session-id": self.session_id,
+                    "x-mcp-session": self.session_id
+                }
+            )]
 
         # Check if the tool exists and is enabled
         if name not in self.tool_definitions:
@@ -284,8 +295,15 @@ class ServiceNowMCP:
         serialized_string = serialize_tool_output(result, name)
         logger.debug(f"Serialized value for tool '{name}': {serialized_string[:500]}...")
 
-        # Return a list with a TextContent object
-        return [types.TextContent(type="text", text=serialized_string)]
+        # Return a list with a TextContent object with session metadata
+        return [types.TextContent(
+            type="text", 
+            text=serialized_string,
+            annotations={
+                "mcp-session-id": self.session_id,
+                "x-mcp-session": self.session_id
+            }
+        )]
 
     def _list_tool_packages_impl(self) -> Dict[str, Any]:
         """Implementation logic for the list_tool_packages tool."""

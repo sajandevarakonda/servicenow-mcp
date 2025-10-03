@@ -122,6 +122,7 @@ from servicenow_mcp.tools.incident_tools import (
     ListIncidentsParams,
     ResolveIncidentParams,
     UpdateIncidentParams,
+    GetIncidentByNumberParams
 )
 from servicenow_mcp.tools.incident_tools import (
     add_comment as add_comment_tool,
@@ -131,6 +132,9 @@ from servicenow_mcp.tools.incident_tools import (
 )
 from servicenow_mcp.tools.incident_tools import (
     list_incidents as list_incidents_tool,
+)
+from servicenow_mcp.tools.incident_tools import (
+    get_incident_by_number as get_incident_tool,
 )
 from servicenow_mcp.tools.incident_tools import (
     resolve_incident as resolve_incident_tool,
@@ -395,6 +399,13 @@ def get_tool_definitions(
             str,  # Expects JSON string
             "List incidents from ServiceNow",
             "json",  # Tool returns list/dict, needs JSON dump
+        ),
+        "get_incident_by_number": (
+            get_incident_tool,
+            GetIncidentByNumberParams,
+            str,  # Expects JSON string
+            "Get an incident by its number from ServiceNow",
+            "dict",  # Tool returns dict
         ),
         # Catalog Tools
         "list_catalog_items": (

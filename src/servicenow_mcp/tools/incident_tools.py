@@ -71,11 +71,19 @@ class ListIncidentsParams(BaseModel):
     
     limit: int = Field(10, description="Maximum number of incidents to return")
     offset: int = Field(0, description="Offset for pagination")
-    state: Optional[str] = Field(None, description="Filter by incident state")
+    state: Optional[int] = Field(None, description="Filter by incident state.  Available states are 1-New, 2-In Progress, 8-Awaiting, 9-Resolved, 3-Closed. Use state number value for filtering incidents by state.")
     assigned_to: Optional[str] = Field(None, description="Filter by assigned user")
     category: Optional[str] = Field(None, description="Filter by category")
     query: Optional[str] = Field(None, description="Search query for incidents")
-
+    date: Optional[str] = Field(
+        None,
+        description="Filter incidents based on given date criteria and respective field. For example created, resolved and opened before/after (YYYY-MM-DD). If there multiple conditions exist related to date combine them with '^OR' or '^AND'.",
+        examples=[
+            "opened_at>=javascript:gs.dateGenerate('2024-06-01','00:00:00')",
+            "sys_created_on>=javascript:gs.dateGenerate('2024-06-01','00:00:00')",
+            "resolved_at<=javascript:gs.dateGenerate('2024-06-01','00:00:00')"
+        ]
+    )  
 
 class GetIncidentByNumberParams(BaseModel):
     """Parameters for fetching an incident by its number."""
@@ -493,6 +501,12 @@ def list_incidents(
     if params.query:
         filters.append(f"short_descriptionLIKE{params.query}^ORdescriptionLIKE{params.query}")
     
+    #if params.date:
+        #filters.append(f"opened_at>=javascript:gs.dateGenerate('{params.date}','00:00:00')^ORsys_created_on>=javascript:gs.dateGenerate('{params.date}','00:00:00')")
+
+    if params.date:
+        filters.append(f"{params.date}")
+    
     if filters:
         query_params["sysparm_query"] = "^".join(filters)
     
@@ -551,7 +565,11 @@ def get_incident_by_number(
     params: GetIncidentByNumberParams,
 ) -> dict:
     """
-    Fetch a single incident from ServiceNow by its number.
+    Fetch a single incident from ServiceNow by its number. 
+    For example:
+    Get incidents details of INC0010001.
+    Fetch incident number INC0010003.
+
 
     Args:
         config: Server configuration.
