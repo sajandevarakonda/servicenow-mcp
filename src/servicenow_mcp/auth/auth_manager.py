@@ -107,6 +107,7 @@ class AuthManager:
         }
         
         logger.info("Attempting client_credentials grant...")
+        #logger.info(f"with token url: {token_url}, auth_str: {auth_str}")
         response = requests.post(token_url, headers=headers, data=data_client_credentials)
         
         logger.info(f"client_credentials response status: {response.status_code}")

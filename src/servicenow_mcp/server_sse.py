@@ -20,16 +20,17 @@ from starlette.responses import Response
 from starlette.routing import Mount, Route
 
 from servicenow_mcp.server import ServiceNowMCP
-from servicenow_mcp.utils.config import AuthConfig, AuthType, BasicAuthConfig, ServerConfig
+from servicenow_mcp.utils.config import AuthConfig, AuthType, BasicAuthConfig, OAuthConfig, ApiKeyConfig, ServerConfig
 
 
-def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlette:
-    """Create a Starlette application that can serve the provided mcp server with SSE."""
+def create_starlette_app(servicenow_mcp: ServiceNowMCP, *, debug: bool = False) -> Starlette:
+    """Create a Starlette application that can serve the ServiceNow MCP server with SSE."""
     sse = SseServerTransport("/messages/")
+    mcp_server = servicenow_mcp.mcp_server  # Get the actual MCP server
 
     async def handle_sse(request: Request) -> Response:
-        # Get session ID from ServiceNow MCP server if available
-        session_id = getattr(mcp_server, 'session_id', None)
+        # Get session ID from ServiceNow MCP server
+        session_id = servicenow_mcp.session_id
         
         async def send_with_headers(message):
             # Add session headers to SSE responses
@@ -60,7 +61,7 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
         
         async def dispatch(self, request: Request, call_next):
             response = await call_next(request)
-            session_id = getattr(mcp_server, 'session_id', None)
+            session_id = servicenow_mcp.session_id
             if session_id:
                 response.headers["x-mcp-session-id"] = session_id
                 response.headers["mcp-session-id"] = session_id
@@ -106,69 +107,96 @@ class ServiceNowSSEMCP(ServiceNowMCP):
             port: Port to listen on
         """
         # Create Starlette app with SSE transport
-        starlette_app = create_starlette_app(self.mcp_server, debug=True)
+        starlette_app = create_starlette_app(self, debug=True)
 
         # Run using uvicorn
         uvicorn.run(starlette_app, host=host, port=port)
 
 
-def create_servicenow_mcp(instance_url: str, username: str, password: str):
+def create_servicenow_mcp(instance_url: str, auth_type: str = "basic", **auth_params):
     """
-    Create a ServiceNow MCP server with minimal configuration.
-
-    This is a simplified factory function that creates a pre-configured
-    ServiceNow MCP server with basic authentication.
+    Create a ServiceNow MCP server with configurable authentication.
 
     Args:
         instance_url: ServiceNow instance URL
-        username: ServiceNow username
-        password: ServiceNow password
+        auth_type: Authentication type ("basic", "oauth", "api_key")
+        **auth_params: Authentication parameters based on auth_type
 
     Returns:
         A configured ServiceNowMCP instance ready to use
-
-    Example:
-        ```python
-        from servicenow_mcp.server import create_servicenow_mcp
-
-        # Create an MCP server for ServiceNow
-        mcp = create_servicenow_mcp(
-            instance_url="https://instance.service-now.com",
-            username="admin",
-            password="password"
-        )
-
-        # Start the server
-        mcp.start()
-        ```
     """
+    
+    if auth_type == "basic":
+        auth_config = AuthConfig(
+            type=AuthType.BASIC, 
+            basic=BasicAuthConfig(
+                username=auth_params["username"], 
+                password=auth_params["password"]
+            )
+        )
+    elif auth_type == "oauth":
+        auth_config = AuthConfig(
+            type=AuthType.OAUTH,
+            oauth=OAuthConfig(
+                client_id=auth_params["client_id"],
+                client_secret=auth_params["client_secret"],
+                username=auth_params["username"],
+                password=auth_params["password"],
+                token_url=auth_params.get("token_url")
+            )
+        )
+    elif auth_type == "api_key":
+        auth_config = AuthConfig(
+            type=AuthType.API_KEY,
+            api_key=ApiKeyConfig(
+                api_key=auth_params["api_key"],
+                header_name=auth_params.get("header_name", "X-ServiceNow-API-Key")
+            )
+        )
+    else:
+        raise ValueError(f"Unsupported auth_type: {auth_type}")
 
-    # Create basic auth config
-    auth_config = AuthConfig(
-        type=AuthType.BASIC, basic=BasicAuthConfig(username=username, password=password)
-    )
-
-    # Create server config
     config = ServerConfig(instance_url=instance_url, auth=auth_config)
-
-    # Create and return server
     return ServiceNowSSEMCP(config)
 
 
 def main():
     load_dotenv()
 
-    # Parse command line arguments
     parser = argparse.ArgumentParser(description="Run ServiceNow MCP SSE-based server")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8080, help="Port to listen on")
     args = parser.parse_args()
 
-    server = create_servicenow_mcp(
-        instance_url=os.getenv("SERVICENOW_INSTANCE_URL"),
-        username=os.getenv("SERVICENOW_USERNAME"),
-        password=os.getenv("SERVICENOW_PASSWORD"),
-    )
+    auth_type = os.getenv("SERVICENOW_AUTH_TYPE", "basic")
+    
+    if auth_type == "basic":
+        server = create_servicenow_mcp(
+            instance_url=os.getenv("SERVICENOW_INSTANCE_URL"),
+            auth_type="basic",
+            username=os.getenv("SERVICENOW_USERNAME"),
+            password=os.getenv("SERVICENOW_PASSWORD")
+        )
+    elif auth_type == "oauth":
+        server = create_servicenow_mcp(
+            instance_url=os.getenv("SERVICENOW_INSTANCE_URL"),
+            auth_type="oauth",
+            client_id=os.getenv("SERVICENOW_CLIENT_ID"),
+            client_secret=os.getenv("SERVICENOW_CLIENT_SECRET"),
+            username=os.getenv("SERVICENOW_USERNAME"),
+            password=os.getenv("SERVICENOW_PASSWORD"),
+            token_url=os.getenv("SERVICENOW_TOKEN_URL")
+        )
+    elif auth_type == "api_key":
+        server = create_servicenow_mcp(
+            instance_url=os.getenv("SERVICENOW_INSTANCE_URL"),
+            auth_type="api_key",
+            api_key=os.getenv("SERVICENOW_API_KEY"),
+            header_name=os.getenv("SERVICENOW_API_KEY_HEADER", "X-ServiceNow-API-Key")
+        )
+    else:
+        raise ValueError(f"Unsupported SERVICENOW_AUTH_TYPE: {auth_type}")
+    
     server.start(host=args.host, port=args.port)
 
 

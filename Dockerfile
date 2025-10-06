@@ -4,6 +4,7 @@ WORKDIR /app
 
 # Copy project files
 COPY pyproject.toml README.md LICENSE ./
+COPY config/ ./config/
 COPY src/ ./src/
 
 # Install the package in development mode
